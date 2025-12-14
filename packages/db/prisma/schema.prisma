@@ -1,0 +1,307 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  KITCHEN
+  WAITER
+}
+
+enum TableSessionStatus {
+  OPEN
+  CHECKOUT
+  CLOSED
+}
+
+enum OrderStatus {
+  NEW
+  ACCEPTED
+  IN_PROGRESS
+  READY
+  SERVED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  CREATED
+  PENDING
+  PAID
+  FAILED
+  CANCELLED
+}
+
+model Venue {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  currency  String   @default("KGS")
+  timezone  String   @default("Asia/Bishkek")
+
+  tables    Table[]
+  categories MenuCategory[]
+  menuItems MenuItem[]
+  users     StaffUser[]
+  sessions  TableSession[]
+  orders    Order[]
+  payments  PaymentIntent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Table {
+  id        String  @id @default(cuid())
+  venueId   String
+  name      String  // e.g. "Стол 7"
+  code      String  // короткий код для QR, уникален в рамках venue
+  isActive  Boolean @default(true)
+
+  venue     Venue   @relation(fields: [venueId], references: [id])
+  sessions  TableSession[]
+  orders    Order[]
+
+  @@unique([venueId, code])
+  @@index([venueId])
+}
+
+model TableSession {
+  id           String             @id @default(cuid())
+  venueId      String
+  tableId      String
+  status       TableSessionStatus @default(OPEN)
+  peopleCount  Int?
+  openedAt     DateTime           @default(now())
+  closedAt     DateTime?
+  lastActiveAt DateTime           @default(now())
+
+  venue       Venue   @relation(fields: [venueId], references: [id])
+  table       Table   @relation(fields: [tableId], references: [id])
+  guests      GuestDevice[]
+  cartItems   CartItem[]
+  orders      Order[]
+  payments    PaymentIntent[]
+
+  @@index([venueId, tableId, status])
+  @@index([lastActiveAt])
+}
+
+model GuestDevice {
+  id          String   @id @default(cuid())
+  sessionId   String
+  deviceHash  String
+  displayName String?
+  joinedAt    DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  session TableSession @relation(fields: [sessionId], references: [id])
+
+  @@unique([sessionId, deviceHash])
+  @@index([sessionId])
+}
+
+model MenuCategory {
+  id        String @id @default(cuid())
+  venueId   String
+  name      String
+  sortOrder Int    @default(0)
+  isActive  Boolean @default(true)
+
+  venue Venue @relation(fields: [venueId], references: [id])
+  items MenuItem[]
+
+  @@index([venueId, sortOrder])
+}
+
+model MenuItem {
+  id          String  @id @default(cuid())
+  venueId     String
+  categoryId  String
+  name        String
+  description String?
+  imageUrl    String?
+  price       Int     // хранить в минимальных единицах (сом = 1) или тыйын — единообразно
+  isActive    Boolean @default(true)
+  isInStock   Boolean @default(true)
+  sortOrder   Int     @default(0)
+
+  venue     Venue        @relation(fields: [venueId], references: [id])
+  category  MenuCategory @relation(fields: [categoryId], references: [id])
+  modifiers MenuModifierGroup[]
+  cartItems CartItem[]
+
+  @@index([venueId, categoryId, sortOrder])
+}
+
+model MenuModifierGroup {
+  id         String @id @default(cuid())
+  itemId     String
+  name       String
+  isRequired Boolean @default(false)
+  minSelect  Int     @default(0)
+  maxSelect  Int     @default(1)
+  sortOrder  Int     @default(0)
+
+  item    MenuItem            @relation(fields: [itemId], references: [id])
+  options MenuModifierOption[]
+
+  @@index([itemId, sortOrder])
+}
+
+model MenuModifierOption {
+  id         String @id @default(cuid())
+  groupId    String
+  name       String
+  priceDelta Int    @default(0)
+  isActive   Boolean @default(true)
+  sortOrder  Int     @default(0)
+
+  group MenuModifierGroup @relation(fields: [groupId], references: [id])
+
+  @@index([groupId, sortOrder])
+}
+
+model CartItem {
+  id              String   @id @default(cuid())
+  sessionId       String
+  menuItemId      String
+  qty             Int      @default(1)
+  note            String?
+  addedByDeviceHash String?
+  unitPrice       Int
+  itemName        String
+
+  session   TableSession @relation(fields: [sessionId], references: [id])
+  menuItem  MenuItem     @relation(fields: [menuItemId], references: [id])
+  modifiers CartItemModifier[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sessionId, createdAt])
+}
+
+model CartItemModifier {
+  id         String @id @default(cuid())
+  cartItemId String
+  optionId   String
+  optionName String
+  priceDelta Int
+
+  cartItem CartItem @relation(fields: [cartItemId], references: [id])
+
+  @@index([cartItemId])
+}
+
+model Order {
+  id        String      @id @default(cuid())
+  venueId   String
+  sessionId String
+  tableId   String
+  status    OrderStatus @default(NEW)
+  number    Int
+  comment   String?
+
+  acceptedAt DateTime?
+  readyAt    DateTime?
+  servedAt   DateTime?
+
+  venue   Venue        @relation(fields: [venueId], references: [id])
+  session TableSession @relation(fields: [sessionId], references: [id])
+  table   Table        @relation(fields: [tableId], references: [id])
+  items   OrderItem[]
+  payments PaymentIntent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([venueId, status, createdAt])
+  @@index([sessionId])
+}
+
+model OrderItem {
+  id         String @id @default(cuid())
+  orderId    String
+  menuItemId String
+  qty        Int
+  note       String?
+  unitPrice  Int
+  itemName   String
+
+  order     Order    @relation(fields: [orderId], references: [id])
+  modifiers OrderItemModifier[]
+
+  @@index([orderId])
+}
+
+model OrderItemModifier {
+  id          String @id @default(cuid())
+  orderItemId String
+  optionId    String
+  optionName  String
+  priceDelta  Int
+
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id])
+
+  @@index([orderItemId])
+}
+
+model PaymentIntent {
+  id         String        @id @default(cuid())
+  venueId    String
+  sessionId  String
+  orderId    String?
+  amount     Int
+  status     PaymentStatus @default(CREATED)
+  provider   String        @default("mock")
+  payload    Json?
+
+  venue      Venue        @relation(fields: [venueId], references: [id])
+  session    TableSession @relation(fields: [sessionId], references: [id])
+  order      Order?       @relation(fields: [orderId], references: [id])
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([sessionId, status])
+  @@index([venueId, status])
+}
+
+model StaffUser {
+  id           String   @id @default(cuid())
+  venueId      String
+  role         UserRole
+  name         String
+  phone        String?  @unique
+  email        String?  @unique
+  passwordHash String?
+  isActive     Boolean  @default(true)
+
+  venue Venue @relation(fields: [venueId], references: [id])
+  sessions StaffSession[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([venueId, role])
+}
+
+model StaffSession {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String
+  expiresAt  DateTime
+  revokedAt  DateTime?
+
+  user StaffUser @relation(fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, expiresAt])
+}
