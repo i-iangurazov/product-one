@@ -10,9 +10,20 @@
     "build": "turbo build",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
+    "postinstall": "pnpm --filter @qr/db run prisma:generate",
     "db:up": "docker compose -f infra/docker/compose.yml up -d",
     "db:down": "docker compose -f infra/docker/compose.yml down",
     "db:reset": "docker compose -f infra/docker/compose.yml down -v && docker compose -f infra/docker/compose.yml up -d"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "prisma",
+      "@prisma/engines",
+      "esbuild",
+      "sharp",
+      "unrs-resolver"
+    ]
   },
   "devDependencies": {
     "@types/node": "^25.0.1",
