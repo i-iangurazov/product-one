@@ -1,10 +1,9 @@
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// Load root env for API and Prisma. From apps/api/src/config -> ../../../.. to repo root.
-dotenv.config({ path: path.resolve(__dirname, '../../../../.env'), override: true });
+// Load root env for API and Prisma. Use project root .env by default.
+const envPath = process.env.ENV_PATH || path.resolve(process.cwd(), '.env');
+dotenv.config({ path: envPath, override: true });
 
 export const FRONTEND_BASE_URL = process.env.FRONTEND_BASE_URL || 'http://localhost:3000';
 export const SESSION_INACTIVITY_MS = Number(process.env.SESSION_INACTIVITY_MS ?? 90 * 60 * 1000);
