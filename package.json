@@ -10,7 +10,7 @@
     "build": "turbo build",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
-    "postinstall": "pnpm --filter @qr/db run prisma:generate",
+    "postinstall": "if [ -z \"$DATABASE_URL\" ]; then echo \"Skipping prisma generate (no DATABASE_URL)\"; else pnpm --filter @qr/db run prisma:generate; fi",
     "db:up": "docker compose -f infra/docker/compose.yml up -d",
     "db:down": "docker compose -f infra/docker/compose.yml down",
     "db:reset": "docker compose -f infra/docker/compose.yml down -v && docker compose -f infra/docker/compose.yml up -d"
