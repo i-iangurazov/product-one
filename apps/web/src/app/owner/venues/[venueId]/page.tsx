@@ -48,6 +48,7 @@ export default function OwnerVenueDetailPage() {
   const venueId = params?.venueId;
   const { token } = useOwnerAuth();
   const t = useTranslations();
+  const tr = useTranslations();
   const [venue, setVenue] = useState<OwnerVenue | null>(null);
   const [tables, setTables] = useState<OwnerTable[]>([]);
   const [users, setUsers] = useState<StaffUser[]>([]);
@@ -706,11 +707,11 @@ export default function OwnerVenueDetailPage() {
                 <div>
                   <div className="font-semibold">{t.name}</div>
                   <div className="text-xs text-muted-foreground">
-                    {t('common.labels.code')}: {t.code}
+                    {tr('common.labels.code')}: {t.code}
                   </div>
                 </div>
                 <Badge variant={t.isActive ? 'default' : 'outline'}>
-                  {t.isActive ? t('status.active') : t('status.inactive')}
+                  {t.isActive ? tr('status.active') : tr('status.inactive')}
                 </Badge>
               </Card>
             ))}
