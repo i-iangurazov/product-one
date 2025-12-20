@@ -20,7 +20,7 @@ type Props = {
   refreshLabel: string;
   refreshing?: boolean;
   languageLabel: string;
-  languageOptions: Array<{ value: Language; label: string }>;
+  languageOptions: Array<{ value: string; label: string }>;
 };
 
 const statusClasses: Record<StatusTone, string> = {

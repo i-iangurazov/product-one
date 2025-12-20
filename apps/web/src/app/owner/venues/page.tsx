@@ -20,6 +20,7 @@ export default function OwnerVenuesPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const t = useTranslations();
+  const tr = useTranslations();
   const [venues, setVenues] = useState<OwnerVenue[]>([]);
   const [tables, setTables] = useState<Array<OwnerTable & { venue?: { id: string; name: string; slug: string } }>>([]);
   const [users, setUsers] = useState<Array<StaffUser & { venue?: { id: string; name: string; slug: string } }>>([]);
@@ -347,16 +348,16 @@ export default function OwnerVenuesPage() {
                     <div>
                       <div className="font-semibold">{t.name}</div>
                       <div className="text-xs text-muted-foreground">
-                        {t('common.labels.code')}: {t.code}
+                        {tr('common.labels.code')}: {t.code}
                       </div>
                       {t.venue && (
                         <div className="text-xs text-muted-foreground">
-                          {t('common.labels.venue')}: {t.venue.name}
+                          {tr('common.labels.venue')}: {t.venue.name}
                         </div>
                       )}
                     </div>
                     <Badge variant={t.isActive ? 'default' : 'outline'}>
-                      {t.isActive ? t('status.active') : t('status.inactive')}
+                      {t.isActive ? tr('status.active') : tr('status.inactive')}
                     </Badge>
                   </Card>
                 </Link>
