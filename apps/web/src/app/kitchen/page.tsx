@@ -1,18 +1,20 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { io } from 'socket.io-client';
 import { Order, OrderStatusEnum, type OrderStatus } from '@qr/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { toast } from 'sonner';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { toastApiError } from '@/lib/toast';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useTranslations } from 'next-intl';
 import { useLanguage } from '@/lib/useLanguage';
-import { getTranslations, type Language } from '@/lib/i18n';
+import type { Language } from '@/lib/i18n';
 import { useStaffAuth } from '@/lib/useStaffAuth';
-import { ChefHat, CheckCircle2, Clock3, RefreshCw, UtensilsCrossed } from 'lucide-react';
+import { ChefHat, Loader2, RefreshCw } from 'lucide-react';
 
 const API_HTTP = process.env.NEXT_PUBLIC_API_HTTP ?? 'http://localhost:4000';
 const API_WS = process.env.NEXT_PUBLIC_API_WS ?? 'http://localhost:4000';
@@ -21,28 +23,41 @@ const VENUE_ID = process.env.NEXT_PUBLIC_VENUE_ID ?? 'venue-demo';
 export default function KitchenPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pendingOrderIds, setPendingOrderIds] = useState<Set<string>>(new Set());
   const { lang, setLang } = useLanguage();
-  const t = getTranslations(lang);
+  const t = useTranslations();
   const { accessToken, user, login, authorizedFetch, loading: authLoading, error: authError } = useStaffAuth();
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const languageOptions = useMemo(
+    () => [
+      { value: 'en', label: t('common.language.options.en') },
+      { value: 'ru', label: t('common.language.options.ru') },
+      { value: 'kg', label: t('common.language.options.kg') },
+    ],
+    [t]
+  );
+  const authErrorMessage = authError ? t(authError as never) : t('errors.invalidCredentials');
 
   const fetchOrders = useCallback(async () => {
     if (!accessToken) {
       return;
     }
     setLoading(true);
+    setError(null);
     try {
-      const res = await authorizedFetch(`${API_HTTP}/staff/orders?status=NEW,ACCEPTED,IN_PROGRESS,READY`);
+      const res = await authorizedFetch(`${API_HTTP}/staff/orders?status=NEW,ACCEPTED,IN_PROGRESS,READY,SERVED`);
       const data = await res.json();
       setOrders(data.orders ?? []);
     } catch (err) {
       console.error(err);
-      toast.error(t.noOrders);
+      setError(t('errors.generic'));
+      toastApiError(err, t('errors.generic'));
     } finally {
       setLoading(false);
     }
-  }, [accessToken, authorizedFetch, t.noOrders]);
+  }, [accessToken, authorizedFetch, t]);
 
   useEffect(() => {
     fetchOrders();
@@ -86,6 +101,7 @@ export default function KitchenPage() {
     if (!accessToken) {
       return;
     }
+    setPendingOrderIds((prev) => new Set(prev).add(orderId));
     try {
       await authorizedFetch(`${API_HTTP}/staff/orders/${orderId}/status`, {
         method: 'PATCH',
@@ -97,156 +113,219 @@ export default function KitchenPage() {
       fetchOrders();
     } catch (err) {
       console.error(err);
-      toast.error(t.errorGeneric);
+      toastApiError(err, t('errors.generic'));
+    } finally {
+      setPendingOrderIds((prev) => {
+        const next = new Set(prev);
+        next.delete(orderId);
+        return next;
+      });
     }
   };
 
   const renderStatus = (status: OrderStatus) => {
-    const variant =
-      status === OrderStatusEnum.enum.NEW
-        ? 'outline'
-        : status === OrderStatusEnum.enum.READY
-          ? 'default'
-          : 'secondary';
-    return <Badge variant={variant}>{status.replace('_', ' ')}</Badge>;
+    const statusClasses: Record<OrderStatus, string> = {
+      [OrderStatusEnum.enum.NEW]: 'border-brandTint/60 bg-brandTint/30 text-foreground',
+      [OrderStatusEnum.enum.ACCEPTED]: 'border-warnTint/70 bg-warnTint/40 text-foreground',
+      [OrderStatusEnum.enum.IN_PROGRESS]: 'border-warnTint/70 bg-warnTint/40 text-foreground',
+      [OrderStatusEnum.enum.READY]: 'border-brandTint/60 bg-brandTint/30 text-foreground',
+      [OrderStatusEnum.enum.SERVED]: 'border-border bg-muted text-muted-foreground',
+      [OrderStatusEnum.enum.CANCELLED]: 'border-destructive/40 bg-destructive/10 text-destructive',
+    };
+    return (
+      <Badge variant="outline" className={statusClasses[status] ?? ''}>
+        {t(`status.order.${status}` as never)}
+      </Badge>
+    );
   };
 
-  const lanes: Array<{ title: string; filter: OrderStatus; action?: { label: string; to: OrderStatus } }> = [
-    { title: t.newOrders, filter: OrderStatusEnum.enum.NEW, action: { label: t.acceptOrder, to: OrderStatusEnum.enum.ACCEPTED } },
+  const lanes: Array<{
+    id: string;
+    title: string;
+    statuses: OrderStatus[];
+    action?: (order: Order) => { label: string; to: OrderStatus } | null;
+  }> = [
     {
-      title: t.acceptedOrders,
-      filter: OrderStatusEnum.enum.ACCEPTED,
-      action: { label: t.startCooking, to: OrderStatusEnum.enum.IN_PROGRESS },
+      id: 'new',
+      title: t('kitchen.lanes.new'),
+      statuses: [OrderStatusEnum.enum.NEW],
+      action: () => ({ label: t('kitchen.actions.acceptOrder'), to: OrderStatusEnum.enum.ACCEPTED }),
     },
     {
-      title: t.inProgressOrders,
-      filter: OrderStatusEnum.enum.IN_PROGRESS,
-      action: { label: t.readyAction, to: OrderStatusEnum.enum.READY },
+      id: 'preparing',
+      title: t('kitchen.lanes.preparing'),
+      statuses: [OrderStatusEnum.enum.ACCEPTED, OrderStatusEnum.enum.IN_PROGRESS],
+      action: (order) =>
+        order.status === OrderStatusEnum.enum.ACCEPTED
+          ? { label: t('kitchen.actions.startCooking'), to: OrderStatusEnum.enum.IN_PROGRESS }
+          : { label: t('kitchen.actions.markReady'), to: OrderStatusEnum.enum.READY },
     },
-    { title: t.readyOrders, filter: OrderStatusEnum.enum.READY },
+    { id: 'ready', title: t('kitchen.lanes.ready'), statuses: [OrderStatusEnum.enum.READY] },
+    { id: 'served', title: t('kitchen.lanes.served'), statuses: [OrderStatusEnum.enum.SERVED] },
   ];
 
   if (!accessToken) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-6 bg-muted/30">
-        <Card className="p-4 space-y-3 w-full max-w-md">
-          <div className="flex items-center justify-between">
-            <div className="text-lg font-semibold">{t.signIn}</div>
-            <Select value={lang} onValueChange={(val) => setLang(val as Language)}>
-              <SelectTrigger className="w-24">
-                <SelectValue placeholder="Lang" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ru">RU</SelectItem>
-                <SelectItem value="en">EN</SelectItem>
-                <SelectItem value="kg">KG</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <Input placeholder={t.email} value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} />
-          <Input
-            placeholder={t.password}
-            type="password"
-            value={loginPassword}
-            onChange={(e) => setLoginPassword(e.target.value)}
-          />
-          <Button
-            disabled={authLoading}
-            onClick={async () => {
-              try {
-                await login({ email: loginEmail, password: loginPassword });
-                fetchOrders();
-              } catch {
-                toast.error(authError ?? t.errorGeneric);
-              }
-            }}
-          >
-            {authLoading ? '…' : t.signIn}
-          </Button>
-        </Card>
+      <div className="min-h-screen bg-background">
+        <div className="mx-auto flex min-h-screen w-full max-w-md items-center justify-center px-4 py-8">
+          <Card className="w-full space-y-4 p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-muted-foreground">{t('common.roles.kitchen')}</div>
+                <div className="text-xl font-semibold">{t('common.actions.signIn')}</div>
+              </div>
+              <Select value={lang} onValueChange={(val) => setLang(val as Language)}>
+                <SelectTrigger className="w-24">
+                  <SelectValue placeholder={t('common.language.label')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {languageOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Input
+              className="h-11"
+              placeholder={t('forms.placeholders.email')}
+              value={loginEmail}
+              onChange={(e) => setLoginEmail(e.target.value)}
+            />
+            <Input
+              className="h-11"
+              placeholder={t('forms.placeholders.password')}
+              type="password"
+              value={loginPassword}
+              onChange={(e) => setLoginPassword(e.target.value)}
+            />
+            <Button
+              disabled={authLoading}
+              onClick={async () => {
+                try {
+                  await login({ email: loginEmail, password: loginPassword });
+                  fetchOrders();
+                } catch (err) {
+                  toastApiError(err ?? authErrorMessage, authErrorMessage);
+                }
+              }}
+            >
+              {authLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+              {authLoading ? t('common.states.loading') : t('common.actions.signIn')}
+            </Button>
+            {authError && <div className="text-sm text-destructive">{authErrorMessage}</div>}
+          </Card>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div>
-          <div className="text-sm text-muted-foreground flex items-center gap-2">
-            <ChefHat className="h-4 w-4" />
-            {t.roleKitchen}
-          </div>
-          <div className="text-2xl font-semibold flex items-center gap-2">
-            <UtensilsCrossed className="h-5 w-5" />
-            {t.kitchen}
-          </div>
-          {user && <div className="text-xs text-muted-foreground">{user.email || user.phone}</div>}
-        </div>
-        <div className="flex items-center gap-2">
-          <Select value={lang} onValueChange={(val) => setLang(val as Language)}>
-            <SelectTrigger className="w-24">
-              <SelectValue placeholder="Lang" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="ru">RU</SelectItem>
-              <SelectItem value="en">EN</SelectItem>
-              <SelectItem value="kg">KG</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button variant="outline" onClick={fetchOrders} disabled={loading} className="gap-2">
-            <RefreshCw className="h-4 w-4" />
-            {t.refresh}
-          </Button>
-        </div>
-      </div>
-      <div className="grid gap-4 lg:grid-cols-4">
-        {lanes.map((lane) => (
-          <Card key={lane.title} className="p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="font-semibold flex items-center gap-2">
-                {lane.filter === OrderStatusEnum.enum.NEW && <Clock3 className="h-4 w-4" />}
-                {lane.filter === OrderStatusEnum.enum.ACCEPTED && <RefreshCw className="h-4 w-4" />}
-                {lane.filter === OrderStatusEnum.enum.IN_PROGRESS && <UtensilsCrossed className="h-4 w-4" />}
-                {lane.filter === OrderStatusEnum.enum.READY && <CheckCircle2 className="h-4 w-4" />}
-                {lane.title}
-              </div>
-              <Badge variant="secondary">{orders.filter((o) => o.status === lane.filter).length}</Badge>
+    <div className="min-h-screen bg-background">
+      <div className="mx-auto w-full max-w-6xl space-y-6 px-4 py-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <ChefHat className="h-4 w-4" />
+              {t('common.roles.kitchen')}
             </div>
-            <div className="space-y-2">
-              {orders
-                .filter((o) => o.status === lane.filter)
-                .map((order) => (
-                  <div key={order.id} className="border rounded-lg p-3 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="font-semibold">#{order.number}</div>
-                      {renderStatus(order.status)}
-                    </div>
-                    <div className="text-xs text-muted-foreground">Стол {order.tableId}</div>
-                    <div className="text-sm">
-                      {order.items.map((i) => (
-                        <div key={i.id} className="flex justify-between">
-                          <span>
-                            {i.qty} × {i.itemName}
-                          </span>
-                          <span className="text-muted-foreground">
-                            {(i.unitPrice / 100).toFixed(2)} + {(i.modifiers.reduce((s, m) => s + m.priceDelta, 0) / 100).toFixed(2)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                    {lane.action && (
-                      <Button size="sm" onClick={() => updateStatus(order.id, lane.action!.to)}>
-                        {lane.action.label}
-                      </Button>
+            <div className="text-2xl font-semibold">{t('kitchen.title')}</div>
+            {user && <div className="text-sm text-muted-foreground">{user.email || user.phone}</div>}
+          </div>
+          <div className="flex items-center gap-2">
+            <Select value={lang} onValueChange={(val) => setLang(val as Language)}>
+              <SelectTrigger className="w-24">
+                <SelectValue placeholder={t('common.language.label')} />
+              </SelectTrigger>
+              <SelectContent>
+                {languageOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button variant="outline" onClick={fetchOrders} disabled={loading} className="gap-2">
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              {t('common.actions.refresh')}
+            </Button>
+          </div>
+        </div>
+
+        {error && (
+          <Card className="flex items-center justify-between border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+            <div>{error}</div>
+            <Button size="sm" variant="outline" onClick={fetchOrders} disabled={loading}>
+              {t('common.actions.refresh')}
+            </Button>
+          </Card>
+        )}
+
+        <div className="grid gap-4 lg:grid-cols-4">
+          {lanes.map((lane) => {
+            const laneOrders = orders.filter((o) => lane.statuses.includes(o.status));
+            return (
+              <Card key={lane.id} className="flex h-full flex-col gap-3 p-4">
+                <div className="flex items-center justify-between">
+                  <div className="text-base font-semibold">{lane.title}</div>
+                  <Badge variant="outline">{laneOrders.length}</Badge>
+                </div>
+                <ScrollArea className="max-h-[70vh] pr-1">
+                  <div className="space-y-3">
+                    {loading ? (
+                      Array.from({ length: 2 }).map((_, idx) => (
+                        <Card key={idx} className="space-y-3 border p-4 animate-pulse">
+                          <div className="h-4 w-1/3 rounded bg-muted" />
+                          <div className="h-3 w-1/2 rounded bg-muted" />
+                          <div className="h-3 w-2/3 rounded bg-muted" />
+                        </Card>
+                      ))
+                    ) : laneOrders.length === 0 ? (
+                      <Card className="border-dashed p-4 text-sm text-muted-foreground">
+                        {t('kitchen.emptyLane')}
+                      </Card>
+                    ) : (
+                      laneOrders.map((order) => {
+                        const action = lane.action?.(order);
+                        const pending = pendingOrderIds.has(order.id);
+                        return (
+                          <Card key={order.id} className="space-y-3 border p-4">
+                            <div className="flex items-center justify-between">
+                              <div className="text-base font-semibold">#{order.number}</div>
+                              {renderStatus(order.status)}
+                            </div>
+                            <div className="text-sm text-muted-foreground">
+                              {t('common.labels.table')} {order.tableId}
+                            </div>
+                            <div className="space-y-1 text-sm">
+                              {order.items.map((i) => (
+                                <div key={i.id} className="flex items-center justify-between gap-2">
+                                  <span>
+                                    {i.qty} × {i.itemName}
+                                  </span>
+                                  <span className="text-muted-foreground">
+                                    {((i.unitPrice + i.modifiers.reduce((s, m) => s + m.priceDelta, 0)) / 100).toFixed(2)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                            {action && (
+                              <Button size="sm" onClick={() => updateStatus(order.id, action.to)} disabled={pending}>
+                                {pending && <Loader2 className="h-4 w-4 animate-spin" />}
+                                {action.label}
+                              </Button>
+                            )}
+                          </Card>
+                        );
+                      })
                     )}
                   </div>
-                ))}
-              {orders.filter((o) => o.status === lane.filter).length === 0 && (
-                <div className="text-sm text-muted-foreground">Нет заказов</div>
-              )}
-            </div>
-          </Card>
-        ))}
+                </ScrollArea>
+              </Card>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

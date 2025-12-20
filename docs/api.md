@@ -36,8 +36,20 @@
 - `PATCH /admin/tables/:id` → partial table → `{ ok, table }`.
 - `DELETE /admin/tables/:id` → `{ ok }`.
 - `GET /admin/tables/:id/qr` → `{ link, qr }` (qr is data URL).
-- Menu admin (demo/in‑memory): `GET/POST/PATCH/DELETE /admin/menu`.
+- Menu admin (DB-backed with versioning): `GET/POST/PATCH/DELETE /admin/menu`, `POST /admin/menu/seed`, `GET /admin/menu/events`.
 - `POST /admin/sessions/:sessionId/close` → `{ ok, sessionId }`.
+
+## Environment variables
+- `DATABASE_URL` (required) Postgres connection.
+- `API_JWT_SECRET`, `API_JWT_SECRET_STAFF`, `API_JWT_SECRET_PLATFORM` secrets for access tokens (staff/platform separated).
+- `STAFF_TOKEN_TTL_SECONDS`, `PLATFORM_TOKEN_TTL_SECONDS` access token TTLs (seconds).
+- `STAFF_REFRESH_TOKEN_TTL_DAYS` refresh lifetime (days).
+- `STAFF_REFRESH_COOKIE_NAME`, `STAFF_REFRESH_COOKIE_PATH`, `STAFF_REFRESH_COOKIE_SAMESITE`, `STAFF_REFRESH_COOKIE_DOMAIN` scope refresh cookie.
+- `FRONTEND_BASE_URL` frontend origin, also used for default cookie domain.
+- `API_ALLOWED_ORIGINS` comma-separated list of allowed CORS origins.
+- `PLATFORM_OWNER_EMAIL`, `PLATFORM_OWNER_PASSWORD` seed credentials for platform owner login.
+- `STAFF_DEMO_PASSWORD` seed credential for demo staff accounts.
+- `SESSION_INACTIVITY_MS`, `CLOSED_SESSION_TTL_MS`, `SERVED_ORDER_TTL_MS` optional session cleanup tuning.
 
 ## WebSocket Events
 - Namespace: root (`io(API_WS)`).

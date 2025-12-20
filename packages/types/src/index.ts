@@ -15,7 +15,7 @@ export const JoinSessionSocketDto = JoinSessionDto.extend({
 });
 export type JoinSessionSocket = z.infer<typeof JoinSessionSocketDto>;
 
-export const UserRoleEnum = z.enum(['ADMIN', 'KITCHEN', 'WAITER']);
+export const UserRoleEnum = z.enum(['ADMIN', 'KITCHEN', 'WAITER', 'VENUE_ADMIN', 'PLATFORM_OWNER']);
 export type UserRole = z.infer<typeof UserRoleEnum>;
 
 export const TableSessionStatusEnum = z.enum(['OPEN', 'CHECKOUT', 'CLOSED']);
@@ -43,6 +43,26 @@ export const ORDER_TRANSITIONS: Record<UserRole, Array<{ from: OrderStatus; to: 
     { from: 'READY', to: 'CANCELLED' },
   ],
   WAITER: [{ from: 'READY', to: 'SERVED' }],
+  VENUE_ADMIN: [
+    { from: 'NEW', to: 'ACCEPTED' },
+    { from: 'ACCEPTED', to: 'IN_PROGRESS' },
+    { from: 'IN_PROGRESS', to: 'READY' },
+    { from: 'READY', to: 'SERVED' },
+    { from: 'NEW', to: 'CANCELLED' },
+    { from: 'ACCEPTED', to: 'CANCELLED' },
+    { from: 'IN_PROGRESS', to: 'CANCELLED' },
+    { from: 'READY', to: 'CANCELLED' },
+  ],
+  PLATFORM_OWNER: [
+    { from: 'NEW', to: 'ACCEPTED' },
+    { from: 'ACCEPTED', to: 'IN_PROGRESS' },
+    { from: 'IN_PROGRESS', to: 'READY' },
+    { from: 'READY', to: 'SERVED' },
+    { from: 'NEW', to: 'CANCELLED' },
+    { from: 'ACCEPTED', to: 'CANCELLED' },
+    { from: 'IN_PROGRESS', to: 'CANCELLED' },
+    { from: 'READY', to: 'CANCELLED' },
+  ],
 };
 
 export const isOrderTransitionAllowed = (role: UserRole, from: OrderStatus, to: OrderStatus) => {
@@ -58,14 +78,21 @@ export const PaymentIntentDto = z.object({
   venueId: z.string(),
   sessionId: z.string(),
   orderId: z.string().optional(),
+  splitPlanId: z.string().optional(),
+  sharesPaid: z.number().int().nonnegative().optional(),
   amount: z.number().int().nonnegative(),
   status: PaymentStatusEnum,
   provider: z.string(),
   payload: z
     .object({
-      mode: z.enum(['FULL', 'EVEN', 'ITEMS']).optional(),
+      mode: z.enum(['FULL', 'EVEN', 'SELECTED']).optional(),
       items: z.array(z.string()).optional(),
       splitCount: z.number().int().positive().optional(),
+      splitPlanId: z.string().optional(),
+      sharesPaid: z.number().int().nonnegative().optional(),
+      baseAmount: z.number().int().nonnegative().optional(),
+      tipPercent: z.number().int().nonnegative().optional(),
+      tipAmount: z.number().int().nonnegative().optional(),
       paidByDeviceHash: z.string().optional(),
     })
     .optional(),
@@ -76,12 +103,17 @@ export type PaymentIntent = z.infer<typeof PaymentIntentDto>;
 
 export const PaymentCreateDto = z.object({
   sessionId: z.string(),
-  amount: z.number().int().positive().optional(),
+  quoteId: z.string(),
+  // legacy fields (optional, ignored by new flow)
   orderId: z.string().optional(),
-  mode: z.enum(['FULL', 'EVEN', 'ITEMS']).default('FULL'),
-  items: z.array(z.string()).optional(), // for ITEMS mode: cart item IDs
-  splitCount: z.number().int().positive().optional(), // for EVEN mode
+  mode: z.enum(['FULL', 'EVEN', 'SELECTED']).optional(),
+  items: z.array(z.string()).optional(),
+  splitCount: z.number().int().positive().optional(),
+  amount: z.number().int().positive().optional(),
+  tipPercent: z.number().int().nonnegative().optional(), // percent tip applied to base amount
+  tipAmount: z.number().int().nonnegative().optional(), // explicit tip in cents
   paidByDeviceHash: z.string().optional(),
+  idempotencyKey: z.string().optional(),
   token: z.string(),
 });
 export type PaymentCreate = z.infer<typeof PaymentCreateDto>;
@@ -90,6 +122,34 @@ export const PaymentCreateResponseDto = z.object({
   payment: PaymentIntentDto,
 });
 export type PaymentCreateResponse = z.infer<typeof PaymentCreateResponseDto>;
+
+export const PaymentQuoteRequestDto = z.object({
+  mode: z.enum(['FULL', 'EVEN', 'SELECTED']),
+  stateVersion: z.number().int().nonnegative(),
+  splitPlanId: z.string().optional(),
+  sharesToPay: z.number().int().positive().optional(),
+  selectedOrderItemIds: z.array(z.string()).optional(),
+  tipCents: z.number().int().nonnegative().optional(),
+  tipPercent: z.number().int().nonnegative().optional(),
+  token: z.string().optional(),
+});
+export type PaymentQuoteRequest = z.infer<typeof PaymentQuoteRequestDto>;
+
+export const PaymentQuoteResponseDto = z.object({
+  quoteId: z.string(),
+  sessionId: z.string(),
+  amount: z.number().int().nonnegative(),
+  currency: z.string(),
+  mode: z.enum(['FULL', 'EVEN', 'SELECTED']),
+  splitPlanId: z.string().optional(),
+  sharesToPay: z.number().int().positive().optional(),
+  selectedOrderItemIds: z.array(z.string()).optional(),
+  breakdown: z.record(z.string(), z.unknown()).optional(),
+  remainingBefore: z.number().int().nonnegative(),
+  expiresAt: z.string().datetime(),
+  stateVersion: z.number().int().nonnegative(),
+});
+export type PaymentQuoteResponse = z.infer<typeof PaymentQuoteResponseDto>;
 
 export const PaymentUpdatedEventDto = z.object({
   payment: PaymentIntentDto,
@@ -130,6 +190,8 @@ export const OrderItemDto = z.object({
   unitPrice: z.number().int(),
   itemName: z.string(),
   modifiers: z.array(OrderItemModifierDto),
+  paidCents: z.number().int().nonnegative().default(0),
+  remainingCents: z.number().int().nonnegative().default(0),
 });
 export type OrderItem = z.infer<typeof OrderItemDto>;
 
@@ -159,6 +221,7 @@ export const TableSessionDto = z.object({
   openedAt: z.string().datetime(),
   closedAt: z.string().datetime().optional(),
   lastActiveAt: z.string().datetime(),
+  stateVersion: z.number().int().nonnegative().default(1),
 });
 export type TableSession = z.infer<typeof TableSessionDto>;
 
@@ -168,6 +231,12 @@ export const SessionStateDto = z.object({
   ordersActive: z.array(OrderDto),
   payments: z.array(PaymentIntentDto).default([]),
   menuVersion: z.string().optional(),
+  stateVersion: z.number().int().nonnegative().default(1),
+  outstanding: z.object({
+    base: z.number().int().nonnegative(),
+    paid: z.number().int().nonnegative(),
+    remaining: z.number().int().nonnegative(),
+  }),
 });
 export type SessionState = z.infer<typeof SessionStateDto>;
 
@@ -183,6 +252,14 @@ export const CartTotalsDto = z.object({
   itemCount: z.number().int(),
 });
 export type CartTotals = z.infer<typeof CartTotalsDto>;
+
+export const PageInfoDto = z.object({
+  page: z.number().int().nonnegative(),
+  pageSize: z.number().int().positive(),
+  total: z.number().int().nonnegative(),
+  pageCount: z.number().int().nonnegative(),
+});
+export type PageInfo = z.infer<typeof PageInfoDto>;
 
 // Socket: client -> server
 export const CartAddItemDto = z.object({
@@ -272,6 +349,23 @@ export const MenuUpdatedEventDto = z.object({
 });
 export type MenuUpdatedEvent = z.infer<typeof MenuUpdatedEventDto>;
 
+export const MenuChangeEventDto = z.object({
+  id: z.string(),
+  menuId: z.string(),
+  venueId: z.string(),
+  type: z.string(),
+  payload: z.unknown().optional(),
+  version: z.number().int(),
+  createdAt: z.string().datetime(),
+});
+export type MenuChangeEvent = z.infer<typeof MenuChangeEventDto>;
+
+export const MenuChangeEventsResponseDto = z.object({
+  events: z.array(MenuChangeEventDto),
+  latestVersion: z.number().int(),
+});
+export type MenuChangeEventsResponse = z.infer<typeof MenuChangeEventsResponseDto>;
+
 export const ErrorEventDto = z.object({
   code: z.string(),
   message: z.string(),
@@ -304,6 +398,7 @@ export const MenuItemDto = z.object({
   name: z.string(),
   description: z.string().nullable().optional(),
   imageUrl: z.string().url().nullable().optional(),
+  accentColor: z.string().optional(),
   price: z.number().int(),
   isActive: z.boolean().default(true),
   isInStock: z.boolean().default(true),
@@ -315,6 +410,7 @@ export type MenuItem = z.infer<typeof MenuItemDto>;
 export const MenuCategoryDto = z.object({
   id: z.string(),
   name: z.string(),
+  color: z.string().optional(),
   sortOrder: z.number().int().default(0),
   items: z.array(MenuItemDto),
 });
@@ -372,13 +468,25 @@ export const AuthRefreshResponseDto = z.object({
 });
 export type AuthRefreshResponse = z.infer<typeof AuthRefreshResponseDto>;
 
+export const StaffUsersResponseDto = z.object({
+  users: z.array(StaffUserDto),
+  pageInfo: PageInfoDto,
+});
+export type StaffUsersResponse = z.infer<typeof StaffUsersResponseDto>;
+
 export const StaffOrdersQueryDto = z.object({
   status: z.string().optional(),
+  page: z.coerce.number().int().positive().optional(),
+  pageSize: z.coerce.number().int().positive().optional(),
+  from: z.string().optional(),
+  to: z.string().optional(),
+  search: z.string().optional(),
 });
 export type StaffOrdersQuery = z.infer<typeof StaffOrdersQueryDto>;
 
 export const StaffOrdersResponseDto = z.object({
   orders: z.array(OrderDto),
+  pageInfo: PageInfoDto,
 });
 export type StaffOrdersResponse = z.infer<typeof StaffOrdersResponseDto>;
 
@@ -386,6 +494,117 @@ export const StaffOrderStatusPatchDto = z.object({
   status: OrderStatusEnum,
 });
 export type StaffOrderStatusPatch = z.infer<typeof StaffOrderStatusPatchDto>;
+
+// Platform owner auth and resources
+export const PlatformUserDto = z.object({
+  id: z.string(),
+  email: z.string().email(),
+  name: z.string().optional(),
+  role: UserRoleEnum,
+  venueId: z.string().optional(),
+  isActive: z.boolean().optional(),
+});
+export type PlatformUser = z.infer<typeof PlatformUserDto>;
+
+export const PlatformAuthLoginDto = z.object({
+  email: z.string().email(),
+  password: z.string().min(6),
+});
+export type PlatformAuthLogin = z.infer<typeof PlatformAuthLoginDto>;
+
+export const PlatformAuthLoginResponseDto = z.object({
+  accessToken: z.string(),
+  user: PlatformUserDto,
+});
+export type PlatformAuthLoginResponse = z.infer<typeof PlatformAuthLoginResponseDto>;
+
+export const OwnerVenueDto = z.object({
+  id: z.string(),
+  name: z.string(),
+  slug: z.string(),
+  address: z.string().optional(),
+  currency: z.string(),
+  timezone: z.string(),
+  isActive: z.boolean().default(true),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type OwnerVenue = z.infer<typeof OwnerVenueDto>;
+
+export const OwnerVenueCreateDto = z.object({
+  name: z.string().min(2),
+  slug: z.string().min(2),
+  address: z.string().optional(),
+  currency: z.string().default('KGS'),
+  timezone: z.string().default('Asia/Bishkek'),
+});
+export type OwnerVenueCreate = z.infer<typeof OwnerVenueCreateDto>;
+
+export const OwnerVenueUpdateDto = OwnerVenueCreateDto.partial().extend({
+  isActive: z.boolean().optional(),
+});
+export type OwnerVenueUpdate = z.infer<typeof OwnerVenueUpdateDto>;
+
+export const OwnerTableDto = z.object({
+  id: z.string(),
+  venueId: z.string(),
+  name: z.string(),
+  code: z.string(),
+  capacity: z.number().int().positive().optional(),
+  isActive: z.boolean().default(true),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type OwnerTable = z.infer<typeof OwnerTableDto>;
+
+export const OwnerTableCreateDto = z.object({
+  name: z.string(),
+  code: z.string(),
+  capacity: z.number().int().positive().optional(),
+  isActive: z.boolean().optional(),
+});
+export type OwnerTableCreate = z.infer<typeof OwnerTableCreateDto>;
+
+export const OwnerTableUpdateDto = OwnerTableCreateDto.partial();
+export type OwnerTableUpdate = z.infer<typeof OwnerTableUpdateDto>;
+
+export const OwnerBulkTableCreateDto = z.object({
+  prefix: z.string().default('T'),
+  count: z.number().int().positive().max(200),
+  capacity: z.number().int().positive().optional(),
+});
+export type OwnerBulkTableCreate = z.infer<typeof OwnerBulkTableCreateDto>;
+
+export const TablesListResponseDto = z.object({
+  tables: z.array(OwnerTableDto),
+  pageInfo: PageInfoDto,
+});
+export type TablesListResponse = z.infer<typeof TablesListResponseDto>;
+
+export const OwnerStaffCreateDto = z.object({
+  venueId: z.string(),
+  role: UserRoleEnum,
+  name: z.string(),
+  email: z.string().email(),
+  password: z.string().min(8),
+  isActive: z.boolean().optional(),
+});
+export type OwnerStaffCreate = z.infer<typeof OwnerStaffCreateDto>;
+
+export const OwnerStaffUpdateDto = OwnerStaffCreateDto.partial();
+export type OwnerStaffUpdate = z.infer<typeof OwnerStaffUpdateDto>;
+
+export const OwnerStatsDto = z.object({
+  ordersByStatus: z.record(OrderStatusEnum, z.number().int().nonnegative()).default({} as any),
+  ordersLast7d: z.array(z.object({ date: z.string(), count: z.number().int().nonnegative() })),
+  ordersLast30d: z.array(z.object({ date: z.string(), count: z.number().int().nonnegative() })),
+  revenue: z.number().int().nonnegative(),
+  topItems: z.array(z.object({ itemName: z.string(), qty: z.number().int().nonnegative(), revenue: z.number().int().nonnegative() })),
+});
+export type OwnerStats = z.infer<typeof OwnerStatsDto>;
+
+export const OwnerMenuVersionDto = z.object({ version: z.string() });
+export type OwnerMenuVersion = z.infer<typeof OwnerMenuVersionDto>;
 
 // REST: admin
 export const StaffCreateDto = z
@@ -425,6 +644,10 @@ export const AdminMenuItemCreateDto = z.object({
   description: z.string().optional(),
   price: z.number().int(),
   imageUrl: z.string().url().optional(),
+  accentColor: z.string().optional(),
+  isActive: z.boolean().default(true),
+  isInStock: z.boolean().default(true),
+  sortOrder: z.number().int().optional(),
   modifiers: z.array(MenuModifierGroupDto).default([]),
 });
 export type AdminMenuItemCreate = z.infer<typeof AdminMenuItemCreateDto>;

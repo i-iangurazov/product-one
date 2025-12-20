@@ -16,21 +16,25 @@ export function useStaffAuth() {
   const login = useCallback(async ({ email, phone, password }: LoginPayload) => {
     setLoading(true);
     setError(null);
-    const res = await fetch(`${API_HTTP}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ email, phone, password }),
-    });
-    if (!res.ok) {
+    try {
+      const res = await fetch(`${API_HTTP}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email, phone, password }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.accessToken) {
+        const errorKey = 'errors.invalidCredentials';
+        setError(errorKey);
+        throw new Error(errorKey);
+      }
+      setAccessToken(data.accessToken);
+      setUser(data.user);
+      return data;
+    } finally {
       setLoading(false);
-      setError('Invalid credentials');
-      throw new Error('Invalid credentials');
     }
-    const data = await res.json();
-    setAccessToken(data.accessToken);
-    setUser(data.user);
-    setLoading(false);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -86,7 +90,15 @@ export function useStaffAuth() {
   );
 
   useEffect(() => {
-    refresh().finally(() => setLoading(false));
+    let active = true;
+    const bootstrap = async () => {
+      await refresh();
+      if (active) setLoading(false);
+    };
+    bootstrap();
+    return () => {
+      active = false;
+    };
   }, [refresh]);
 
   return { accessToken, user, loading, error, login, logout, refresh, authorizedFetch };

@@ -2,7 +2,9 @@
 
 import * as React from "react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
+import { VisuallyHidden } from "@radix-ui/react-visually-hidden"
 import { XIcon } from "lucide-react"
+import { useTranslations } from "next-intl"
 
 import { cn } from "@/lib/utils"
 
@@ -50,10 +52,31 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  fallbackTitle,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
+  fallbackTitle?: string
 }) {
+  const t = useTranslations()
+  const hasDialogTitle = React.useMemo(() => {
+    const containsTitle = (node: React.ReactNode): boolean => {
+      if (!node) return false
+      if (Array.isArray(node)) {
+        return node.some(containsTitle)
+      }
+      if (React.isValidElement<{ children?: React.ReactNode }>(node)) {
+        if (node.type === DialogPrimitive.Title || node.type === DialogTitle) return true
+        return containsTitle(node.props.children)
+      }
+      return false
+    }
+
+    return containsTitle(children)
+  }, [children])
+
+  const resolvedFallbackTitle = fallbackTitle ?? t("common.labels.dialog")
+
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay />
@@ -72,9 +95,14 @@ function DialogContent({
             className="ring-offset-background focus:ring-ring data-[state=open]:bg-accent data-[state=open]:text-muted-foreground absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
           >
             <XIcon />
-            <span className="sr-only">Close</span>
+            <span className="sr-only">{t("common.actions.close")}</span>
           </DialogPrimitive.Close>
         )}
+        {!hasDialogTitle && resolvedFallbackTitle ? (
+          <VisuallyHidden>
+            <DialogPrimitive.Title>{resolvedFallbackTitle}</DialogPrimitive.Title>
+          </VisuallyHidden>
+        ) : null}
       </DialogPrimitive.Content>
     </DialogPortal>
   )

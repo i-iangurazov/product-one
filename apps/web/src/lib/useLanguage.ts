@@ -1,24 +1,36 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import type { Language } from './i18n';
+import { useCallback, useEffect } from 'react';
+import { useLocale } from 'next-intl';
+import { useRouter } from 'next/navigation';
+import { defaultLocale, isLanguage, LOCALE_COOKIE, LOCALE_STORAGE, type Language } from './i18n';
 
-const STORAGE_KEY = 'qr_lang';
+const COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 
 export function useLanguage(): { lang: Language; setLang: (lang: Language) => void } {
-  const [lang, setLangState] = useState<Language>('en');
+  const locale = useLocale();
+  const router = useRouter();
+  const lang = isLanguage(locale) ? locale : defaultLocale;
 
   useEffect(() => {
-    const saved = (typeof window !== 'undefined' && (localStorage.getItem(STORAGE_KEY) as Language | null)) || null;
-    if (saved) setLangState(saved);
-  }, []);
-
-  const setLang = (next: Language) => {
-    setLangState(next);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(STORAGE_KEY, next);
+    if (typeof window === 'undefined') return;
+    const stored = localStorage.getItem(LOCALE_STORAGE);
+    if (isLanguage(stored) && stored !== lang) {
+      document.cookie = `${LOCALE_COOKIE}=${stored}; path=/; max-age=${COOKIE_MAX_AGE}`;
+      router.refresh();
     }
-  };
+  }, [lang, router]);
+
+  const setLang = useCallback(
+    (next: Language) => {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(LOCALE_STORAGE, next);
+        document.cookie = `${LOCALE_COOKIE}=${next}; path=/; max-age=${COOKIE_MAX_AGE}`;
+      }
+      router.refresh();
+    },
+    [router]
+  );
 
   return { lang, setLang };
 }

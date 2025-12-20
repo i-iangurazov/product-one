@@ -1,7 +1,15 @@
 import crypto from 'node:crypto';
 import { StaffUserDto, UserRoleEnum, type StaffUser } from '@qr/types';
 import { hashToken, generateTempPassword, hashPassword } from './crypto';
-import { refreshCookieName, refreshCookieSecure, refreshTokenTtlDays, DEMO_STAFF_PASSWORD } from '../config/env';
+import {
+  refreshCookieDomain,
+  refreshCookieName,
+  refreshCookiePath,
+  refreshCookieSameSite,
+  refreshCookieSecure,
+  refreshTokenTtlDays,
+  DEMO_STAFF_PASSWORD,
+} from '../config/env';
 
 export const mapStaffUser = (u: any) =>
   StaffUserDto.parse({
@@ -74,4 +82,7 @@ export const createStaffService = (prisma: any) => {
 export const refreshCookieOptions = {
   name: refreshCookieName,
   secure: refreshCookieSecure,
+  domain: refreshCookieDomain,
+  path: refreshCookiePath,
+  sameSite: refreshCookieSameSite,
 };

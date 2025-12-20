@@ -11,6 +11,8 @@ enum UserRole {
   ADMIN
   KITCHEN
   WAITER
+  VENUE_ADMIN
+  PLATFORM_OWNER
 }
 
 enum TableSessionStatus {
@@ -42,11 +44,16 @@ model Venue {
   slug      String   @unique
   currency  String   @default("KGS")
   timezone  String   @default("Asia/Bishkek")
+  address   String?
+  isActive  Boolean  @default(true)
 
+  menu       Menu?
+  menuEvents MenuChangeEvent[]
   tables    Table[]
   categories MenuCategory[]
   menuItems MenuItem[]
   users     StaffUser[]
+  platformUsers PlatformUser[]
   sessions  TableSession[]
   orders    Order[]
   payments  PaymentIntent[]
@@ -55,12 +62,46 @@ model Venue {
   updatedAt DateTime @updatedAt
 }
 
+model Menu {
+  id        String   @id @default(cuid())
+  venueId   String   @unique
+  name      String   @default("Main menu")
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  venue      Venue           @relation(fields: [venueId], references: [id])
+  categories MenuCategory[]
+  items      MenuItem[]
+  events     MenuChangeEvent[]
+}
+
+model MenuChangeEvent {
+  id        String   @id @default(cuid())
+  menuId    String
+  venueId   String
+  type      String
+  payload   Json
+  version   Int
+  createdAt DateTime @default(now())
+
+  menu  Menu  @relation(fields: [menuId], references: [id])
+  venue Venue @relation(fields: [venueId], references: [id])
+
+  @@index([venueId, version])
+  @@index([menuId, version])
+  @@index([createdAt])
+}
+
 model Table {
   id        String  @id @default(cuid())
   venueId   String
   name      String  // e.g. "Стол 7"
   code      String  // короткий код для QR, уникален в рамках venue
+  capacity  Int?
   isActive  Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   venue     Venue   @relation(fields: [venueId], references: [id])
   sessions  TableSession[]
@@ -68,6 +109,8 @@ model Table {
 
   @@unique([venueId, code])
   @@index([venueId])
+  @@index([venueId, createdAt])
+  @@index([venueId, isActive])
 }
 
 model TableSession {
@@ -79,6 +122,7 @@ model TableSession {
   openedAt     DateTime           @default(now())
   closedAt     DateTime?
   lastActiveAt DateTime           @default(now())
+  stateVersion Int                @default(1)
 
   venue       Venue   @relation(fields: [venueId], references: [id])
   table       Table   @relation(fields: [tableId], references: [id])
@@ -86,6 +130,7 @@ model TableSession {
   cartItems   CartItem[]
   orders      Order[]
   payments    PaymentIntent[]
+  splitPlans  SplitPlan[]
 
   @@index([venueId, tableId, status])
   @@index([lastActiveAt])
@@ -107,35 +152,47 @@ model GuestDevice {
 
 model MenuCategory {
   id        String @id @default(cuid())
+  menuId    String
   venueId   String
   name      String
+  color     String?
   sortOrder Int    @default(0)
   isActive  Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
+  menu  Menu  @relation(fields: [menuId], references: [id])
   venue Venue @relation(fields: [venueId], references: [id])
   items MenuItem[]
 
   @@index([venueId, sortOrder])
+  @@index([menuId, sortOrder])
 }
 
 model MenuItem {
-  id          String  @id @default(cuid())
-  venueId     String
-  categoryId  String
-  name        String
-  description String?
-  imageUrl    String?
-  price       Int     // хранить в минимальных единицах (сом = 1) или тыйын — единообразно
-  isActive    Boolean @default(true)
-  isInStock   Boolean @default(true)
-  sortOrder   Int     @default(0)
+  id           String  @id @default(cuid())
+  menuId       String
+  venueId      String
+  categoryId   String
+  name         String
+  description  String?
+  imageUrl     String?
+  accentColor  String?
+  price        Int     // хранить в минимальных единицах (сом = 1) или тыйын — единообразно
+  isActive     Boolean @default(true)
+  isInStock    Boolean @default(true)
+  sortOrder    Int     @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
+  menu      Menu         @relation(fields: [menuId], references: [id])
   venue     Venue        @relation(fields: [venueId], references: [id])
   category  MenuCategory @relation(fields: [categoryId], references: [id])
   modifiers MenuModifierGroup[]
   cartItems CartItem[]
 
   @@index([venueId, categoryId, sortOrder])
+  @@index([menuId, sortOrder])
 }
 
 model MenuModifierGroup {
@@ -221,6 +278,7 @@ model Order {
   updatedAt DateTime @updatedAt
 
   @@index([venueId, status, createdAt])
+  @@index([venueId, createdAt])
   @@index([sessionId])
 }
 
@@ -235,6 +293,7 @@ model OrderItem {
 
   order     Order    @relation(fields: [orderId], references: [id])
   modifiers OrderItemModifier[]
+  allocations PaymentAllocation[]
 
   @@index([orderId])
 }
@@ -256,6 +315,8 @@ model PaymentIntent {
   venueId    String
   sessionId  String
   orderId    String?
+  splitPlanId String?
+  sharesPaid Int?
   amount     Int
   status     PaymentStatus @default(CREATED)
   provider   String        @default("mock")
@@ -264,12 +325,93 @@ model PaymentIntent {
   venue      Venue        @relation(fields: [venueId], references: [id])
   session    TableSession @relation(fields: [sessionId], references: [id])
   order      Order?       @relation(fields: [orderId], references: [id])
+  splitPlan  SplitPlan?   @relation(fields: [splitPlanId], references: [id])
+  allocations PaymentAllocation[]
 
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
   @@index([sessionId, status])
   @@index([venueId, status])
+  @@index([splitPlanId])
+}
+
+model PaymentAllocation {
+  id          String   @id @default(cuid())
+  paymentId   String
+  orderItemId String
+  amountCents Int
+  createdAt   DateTime @default(now())
+
+  payment   PaymentIntent @relation(fields: [paymentId], references: [id])
+  orderItem OrderItem     @relation(fields: [orderItemId], references: [id])
+
+  @@unique([paymentId, orderItemId])
+  @@index([orderItemId])
+  @@index([paymentId])
+}
+
+model SplitPlan {
+  id          String   @id @default(cuid())
+  sessionId   String
+  totalShares Int
+  baseVersion Int
+  locked      Boolean  @default(false)
+  session     TableSession @relation(fields: [sessionId], references: [id])
+  payments    PaymentIntent[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([sessionId])
+}
+
+model PaymentQuote {
+  id            String   @id @default(cuid())
+  sessionId     String
+  mode          String
+  amount        Int
+  stateVersion  Int
+  splitPlanId   String?
+  sharesToPay   Int?
+  selectedItems Json?
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+
+  @@index([sessionId])
+  @@index([expiresAt])
+}
+
+model PlatformUser {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  role         UserRole
+  venueId      String?
+  isActive     Boolean  @default(true)
+
+  venue    Venue?            @relation(fields: [venueId], references: [id])
+  sessions PlatformSession[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([venueId, role])
+}
+
+model PlatformSession {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String
+  expiresAt  DateTime
+  revokedAt  DateTime?
+
+  user PlatformUser @relation(fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, expiresAt])
 }
 
 model StaffUser {
@@ -289,6 +431,8 @@ model StaffUser {
   updatedAt DateTime @updatedAt
 
   @@index([venueId, role])
+  @@index([venueId, isActive])
+  @@index([venueId, role, isActive])
 }
 
 model StaffSession {
@@ -304,4 +448,22 @@ model StaffSession {
   updatedAt DateTime @updatedAt
 
   @@index([userId, expiresAt])
+}
+
+model IdempotencyKey {
+  id          String   @id @default(cuid())
+  scope       String
+  key         String
+  venueId     String?
+  tableId     String?
+  staffUserId String?
+  sessionId   String?
+  requestHash String
+  responseJson Json?
+  statusCode  Int?
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@unique([scope, key])
+  @@index([expiresAt])
 }
